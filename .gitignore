@@ -1,0 +1,15 @@
+# Node ve React Gereksizlikleri
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Java ve Spring Boot Gereksizlikleri
+backend/target/
+backend/.mvn/
+backend/src/main/resources/application.properties
+
+# İşletim Sistemi ve IDE Çöpleri
+.vscode/
+.idea/
+*.log
+.DS_Store
