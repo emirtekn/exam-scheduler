@@ -9,6 +9,8 @@ import com.backend.demo.repository.SinavRepository;
 import com.backend.demo.service.SinavService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -24,6 +26,7 @@ public class SinavController {
     private final SinavService sinavService;
     private final DersRepository dersRepository; 
     private final OturumRepository oturumRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     @PostMapping("/ekle")
     public ResponseEntity<String> sinavEkle(@RequestBody SinavRequestDTO request) {
@@ -34,18 +37,14 @@ public class SinavController {
             
             yeniSinav.setDers(ders);
             yeniSinav.setTarih(request.getTarih());
-            
-            // =========================================================
-            // ÇÖZÜM 1: SQL Server NULL Kısıtlamasını Kandırma
-            // =========================================================
+
             if (request.getOturumId() != null) {
                 yeniSinav.setOturum(oturumRepository.findById(request.getOturumId()).orElse(null));
             } else {
-                // SQL Server NULL kabul etmediği için geçici (dummy) olarak listedeki İLK oturumu atıyoruz.
-                // Dashboard ekranından atama yapıldığında bu geçici oturum güncellenecektir!
-                yeniSinav.setOturum(oturumRepository.findAll().get(0));
+                // Planlama aşaması: oturum henüz atanmadı (NULL). alter_sinavlar_oturum_null.sql gerekli.
+                yeniSinav.setOturum(null);
             }
-            
+
             sinavRepository.save(yeniSinav);
             return ResponseEntity.ok("Sınav başarıyla tanımlandı (Henüz salon/hoca atanmadı).");
         } catch (Exception e) {
@@ -87,5 +86,30 @@ public class SinavController {
     @GetMapping("/liste")
     public ResponseEntity<List<Sinav>> tumSinavlariGetir() {
         return ResponseEntity.ok(sinavRepository.findAll());
+    }
+
+    @DeleteMapping("/sil/{sinavId}")
+    @Transactional
+    public ResponseEntity<String> sinavSil(@PathVariable Integer sinavId) {
+        try {
+            if (!sinavRepository.existsById(sinavId)) {
+                return ResponseEntity.badRequest().body("Silinecek sınav bulunamadı.");
+            }
+
+            // 1) Gözetmen atamaları (salon atamasına bağlı)
+            jdbcTemplate.update(
+                "DELETE FROM Gozetmen_Atamalari WHERE AtamaID IN (SELECT AtamaID FROM Sinav_Salonlari WHERE SinavID = ?)",
+                sinavId
+            );
+            // 2) Salon atamaları
+            jdbcTemplate.update("DELETE FROM Sinav_Salonlari WHERE SinavID = ?", sinavId);
+            // 3) Sınav kaydı
+            jdbcTemplate.update("DELETE FROM Sinavlar WHERE SinavID = ?", sinavId);
+
+            return ResponseEntity.ok("Sınav ve ilişkili atamalar başarıyla silindi.");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.badRequest().body("Silme hatası: " + e.getMessage());
+        }
     }
 }

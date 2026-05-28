@@ -21,7 +21,7 @@ public class Sinav {
     @Column(name = "Tarih")
     private LocalDate tarih;
 
-    @ManyToOne // Hangi saatte olduğunu bağlıyoruz
-    @JoinColumn(name = "OturumID", referencedColumnName = "OturumID")
+    @ManyToOne(optional = true)
+    @JoinColumn(name = "OturumID", referencedColumnName = "OturumID", nullable = true)
     private Oturum oturum;
 }

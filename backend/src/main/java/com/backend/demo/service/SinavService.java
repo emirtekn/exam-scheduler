@@ -85,6 +85,52 @@ public class SinavService {
             throw new RuntimeException("KURAL 6 İHLALİ: Gözetmen bir günde maksimum 4 oturumda görev alabilir!");
         }
 
+        // -------------------------------------------------------------------------
+        // KURAL 7: Mazeretler tablosunda "İzinli" olan hoca o gün atanamaz
+        // -------------------------------------------------------------------------
+        String sqlKural7 = "SELECT COUNT(*) FROM Personel_Durumlari " +
+                           "WHERE PersonelID = ? AND Tarih = ? AND MazeretTuru = N'İzinli'";
+        Integer izinliMi = jdbcTemplate.queryForObject(sqlKural7, Integer.class, personelId, tarih);
+        if (izinliMi != null && izinliMi > 0) {
+            throw new RuntimeException("KURAL 7 İHLALİ: Seçilen gözetmen bu tarihte izinli görünüyor!");
+        }
+
+        // -------------------------------------------------------------------------
+        // KURAL 9: Bir gözetmen arka arkaya en fazla 3 oturumda görev alabilir
+        // -------------------------------------------------------------------------
+        String sqlKural9 = "SELECT dbo.fn_GozetmenOturumLimitiGectiMi(?, ?, ?)";
+        Integer limitGectiMi = jdbcTemplate.queryForObject(sqlKural9, Integer.class, personelId, tarih, oturumId);
+        if (limitGectiMi != null && limitGectiMi == 1) {
+            throw new RuntimeException("KURAL 9 İHLALİ: Seçilen gözetmen arka arkaya 3 oturum limitine takılıyor!");
+        }
+
+        // -------------------------------------------------------------------------
+        // KURAL 2: Bir yarıyıla ait bir günde max 2 sınav olabilir, iki sınav arası en az 1 oturum boş olmalı
+        // (Aynı bölüm + aynı yarıyıl seti üzerinden hesaplanır)
+        // -------------------------------------------------------------------------
+        String sqlKural2Say = "SELECT COUNT(DISTINCT s.OturumID) " +
+                              "FROM Sinavlar s " +
+                              "JOIN Dersler d ON s.DersID = d.DersID " +
+                              "WHERE s.Tarih = ? " +
+                              "  AND d.BolumID = (SELECT BolumID FROM Dersler WHERE DersID = ?) " +
+                              "  AND d.Yariyil = (SELECT Yariyil FROM Dersler WHERE DersID = ?)";
+        Integer gunlukSinavSayisi = jdbcTemplate.queryForObject(sqlKural2Say, Integer.class, tarih, dersId, dersId);
+        if (gunlukSinavSayisi != null && gunlukSinavSayisi >= 2) {
+            throw new RuntimeException("KURAL 2 İHLALİ: Bu yarıyıl için bu günde maksimum 2 sınav yapılabilir!");
+        }
+
+        String sqlKural2Bosluk = "SELECT COUNT(*) " +
+                                 "FROM Sinavlar s " +
+                                 "JOIN Dersler d ON s.DersID = d.DersID " +
+                                 "WHERE s.Tarih = ? " +
+                                 "  AND d.BolumID = (SELECT BolumID FROM Dersler WHERE DersID = ?) " +
+                                 "  AND d.Yariyil = (SELECT Yariyil FROM Dersler WHERE DersID = ?) " +
+                                 "  AND s.OturumID IN (?, ?)";
+        Integer aralikIhlali = jdbcTemplate.queryForObject(sqlKural2Bosluk, Integer.class, tarih, dersId, dersId, oturumId - 1, oturumId + 1);
+        if (aralikIhlali != null && aralikIhlali > 0) {
+            throw new RuntimeException("KURAL 2 İHLALİ: Aynı yarıyıl için iki sınav peş peşe oturumlara atanamaz (en az 1 oturum boşluk olmalı)!");
+        }
+
         // =========================================================================
         // TÜM MANUEL KISITLAR GEÇİLDİYSE SQL SERVER'A YAZMA ADIMI BAŞLIYOR
         // =========================================================================

@@ -1,15 +1,101 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { LayoutDashboard, Loader2, Edit3, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Loader2, Edit3, AlertTriangle, ShieldCheck, Bot } from 'lucide-react';
 import toast from 'react-hot-toast';
+
+const tarihNorm = (t) => (t ? String(t).split('T')[0] : '');
+const bolumIdOfDers = (d) => d?.bolum?.bolumId ?? d?.bolumId ?? null;
+
+/** Oturumları saat sırasına göre diz (Kural 9 indeks hesabı) */
+const oturumlariSirala = (oturumlar) =>
+  [...(oturumlar || [])].sort((a, b) => Number(a.oturumId) - Number(b.oturumId));
+
+const oturumIndeksHaritasi = (siraliOturumlar) => {
+  const map = new Map();
+  siraliOturumlar.forEach((o, idx) => map.set(Number(o.oturumId), idx));
+  return map;
+};
+
+/**
+ * HATA 1 — Kapasite toplama:
+ * Sınavın aynı gün + aynı oturumdaki tüm salon atamalarının kapasite toplamı.
+ */
+const sinavOturumdakiToplamKapasite = (sinavId, tarih, oturumId, atamalar) =>
+  atamalar
+    .filter(
+      (a) =>
+        Number(a.sinavId) === Number(sinavId) &&
+        a.tarih === tarih &&
+        Number(a.oturum?.oturumId) === Number(oturumId)
+    )
+    .reduce((toplam, a) => toplam + Number(a.derslik?.kapasite ?? 0), 0);
+
+/**
+ * HATA 2 — Sınav o güne tek oturuma kilitli mi?
+ * İlk atama yapılan oturum = kilitli oturum; diğer oturumlarda listelenmez.
+ */
+const sinavGunlukKilitliOturumId = (sinavId, tarih, atamalar) => {
+  const gunluk = atamalar.filter(
+    (a) => Number(a.sinavId) === Number(sinavId) && a.tarih === tarih
+  );
+  if (gunluk.length === 0) return null;
+  return Number(gunluk[0].oturum?.oturumId);
+};
+
+/** Kural 7: personelId|tarih anahtarı ile mazeret kontrolü */
+const personelMazeretliMi = (personelId, tarih, mazeretliSet) =>
+  mazeretliSet.has(`${Number(personelId)}|${tarih}`);
+
+/**
+ * HATA 3 — Kural 9: Arka arkaya en fazla 3 oturum
+ * Hedef oturuma eklenirse 4+ ardışık oturum olacaksa, hocayı gizle.
+ * Örn: Atanmış [1,2,3] + hedef 4 → ardışık 4 olur → engelle
+ */
+const ardisikOturumLimitiAsildi = (personelId, tarih, hedefOturumId, atamalar, oturumIndeksMap) => {
+  const hedefIdx = oturumIndeksMap.get(Number(hedefOturumId));
+  if (hedefIdx === undefined) return false;
+
+  // Gözetmenin bu güne ait tüm atanmış oturum indekslerini bul
+  const atananIndeksler = new Set(
+    atamalar
+      .filter((a) => a.tarih === tarih && Number(a.personel?.personelId) === Number(personelId))
+      .map((a) => oturumIndeksMap.get(Number(a.oturum?.oturumId)))
+      .filter((idx) => idx !== undefined)
+  );
+  
+  // Hedef oturumu da ekle (sanki atanacak gibi)
+  atananIndeksler.add(hedefIdx);
+
+  // Hedef dahil kaç ardışık oturum var?
+  let ardisikSayisi = 1; // hedefIdx
+  
+  // Geriye dönük ardışık kontrol
+  let i = hedefIdx - 1;
+  while (atananIndeksler.has(i)) {
+    ardisikSayisi += 1;
+    i -= 1;
+  }
+  
+  // İleriye dönük ardışık kontrol
+  i = hedefIdx + 1;
+  while (atananIndeksler.has(i)) {
+    ardisikSayisi += 1;
+    i += 1;
+  }
+  
+  // 4+ ardışık oturum olacaksa engelle (max 3 kuralı)
+  return ardisikSayisi >= 4;
+};
 
 const Dashboard = () => {
   const [derslikler, setDerslikler] = useState([]);
   const [oturumlar, setOturumlar] = useState([]);
   const [personeller, setPersoneller] = useState([]);
   const [atamalar, setAtamalar] = useState([]); 
-  const [sinavlar, setSinavlar] = useState([]); 
+  const [sinavlar, setSinavlar] = useState([]);
+  const [mazeretliSet, setMazeretliSet] = useState(new Set());
   const [loading, setLoading] = useState(true);
+  const [otomatikYukleniyor, setOtomatikYukleniyor] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [seciliHucre, setSeciliHucre] = useState(null);
@@ -29,18 +115,47 @@ const Dashboard = () => {
         axios.get('http://localhost:8080/api/oturumlar/liste'),
         axios.get('http://localhost:8080/api/personeller/liste'),
         axios.get('http://localhost:8080/api/atamalar/liste'),
-        axios.get('http://localhost:8080/api/sinavlar/liste') 
+        axios.get('http://localhost:8080/api/sinavlar/liste')
       ]);
+
+      let mazeretKayitlari = [];
+      try {
+        const mRes = await axios.get('http://localhost:8080/api/durumlar/mazeretli');
+        mazeretKayitlari = mRes.data || [];
+      } catch {
+        try {
+          const listeRes = await axios.get('http://localhost:8080/api/durumlar/liste');
+          mazeretKayitlari = (listeRes.data || []).filter((d) =>
+            ['İzinli', 'Raporlu'].includes(d.mazeretTuru)
+          );
+        } catch {
+          mazeretKayitlari = [];
+        }
+      }
+
+      const mazeretSet = new Set();
+      mazeretKayitlari.forEach((r) => {
+        const pid = r.personelId ?? r.PersonelID ?? r.personelID;
+        const t = tarihNorm(r.tarih ?? r.Tarih);
+        if (pid != null && t) mazeretSet.add(`${Number(pid)}|${t}`);
+      });
+      setMazeretliSet(mazeretSet);
       
       setDerslikler(dRes.data); setOturumlar(oRes.data);
-      setPersoneller(pRes.data); setSinavlar(sinavRes.data); 
+      setPersoneller(pRes.data); setSinavlar(sinavRes.data);
       
       const formatliAtamalar = atamaRes.data.map(row => ({
         sinavId: row.sinavId || row.SINAVID || row.SinavID, 
-        tarih: String(row.tarih || row.TARIH).split('T')[0], 
+        tarih: tarihNorm(row.tarih || row.TARIH), 
         oturum: { oturumId: row.oturumId || row.OTURUMID },
         derslik: { derslikId: row.derslikId || row.DERSLIKID, ad: row.derslikAd || row.DERSLIKAD, kapasite: row.kapasite || row.KAPASITE },
-        ders: { dersId: row.dersId || row.DERSID, dersAdi: row.dersAdi || row.DERSADI, ogrenciSayisi: row.ogrenciSayisi || row.OGRENCISAYISI, yariyil: row.yariyil || row.YARIYIL },
+        ders: {
+          dersId: row.dersId || row.DERSID,
+          dersAdi: row.dersAdi || row.DERSADI,
+          ogrenciSayisi: row.ogrenciSayisi || row.OGRENCISAYISI,
+          yariyil: row.yariyil ?? row.YARIYIL,
+          bolumId: row.bolumId ?? row.BOLUMID
+        },
         personel: { 
             personelId: row.personelId || row.PERSONELID, 
             unvan: row.unvan || row.UNVAN || '', 
@@ -92,6 +207,47 @@ const Dashboard = () => {
     }
   };
 
+  const handleOtomatikDagit = async () => {
+    if (!window.confirm('Henüz atanmamış tüm sınavlar otomatik olarak dağıtılsın mı?\n\nRobot; oturum, salon (kapasite) ve gözetmen atamalarını kısıtlara uygun şekilde yapacaktır.')) {
+      return;
+    }
+
+    setOtomatikYukleniyor(true);
+    const toastId = toast.loading('🤖 Robot çalışıyor, lütfen bekleyin...');
+
+    try {
+      const res = await axios.post('http://localhost:8080/api/atamalar/otomatik-dagit');
+      const data = res.data || {};
+
+      const basarili = data.basariliSayisi ?? data.basariliSinavlar?.length ?? 0;
+      const atanamayanListe = data.atanamayanSinavlar || [];
+      const ozet = data.ozetMesaj || 'İşlem tamamlandı.';
+
+      if (basarili > 0) {
+        const basariliListe = (data.basariliSinavlar || []).slice(0, 5).join(', ');
+        const ek = basarili > 5 ? ` (+${basarili - 5} sınav daha)` : '';
+        toast.success(`${ozet}\nAtanan: ${basariliListe}${ek}`, { id: toastId, duration: 6000 });
+      } else {
+        toast(ozet, { id: toastId, icon: 'ℹ️' });
+      }
+
+      if (atanamayanListe.length > 0) {
+        toast.error(
+          `Atanamayan sınavlar (${atanamayanListe.length}):\n${atanamayanListe.join('\n')}`,
+          { duration: 10000 }
+        );
+      }
+
+      await verileriGetir();
+    } catch (error) {
+      console.error(error);
+      const mesaj = error.response?.data?.ozetMesaj || error.response?.data || 'Otomatik dağıtım sırasında hata oluştu!';
+      toast.error(String(mesaj), { id: toastId, duration: 8000 });
+    } finally {
+      setOtomatikYukleniyor(false);
+    }
+  };
+
   const sinavIptalEt = async (hucre) => {
     if (!window.confirm("Bu atamayı iptal etmek istediğinize emin misiniz? Sınav boşa düşecektir.")) return;
     const toastId = toast.loading('İptal ediliyor...');
@@ -107,35 +263,145 @@ const Dashboard = () => {
 
   let oGunePlanliSinavlar = [];
   let uygunPersoneller = [];
+  const seciliSinav = sinavlar.find((s) => String(s.sinavId) === String(seciliSinavId));
+  const seciliSinavBolumId = bolumIdOfDers(seciliSinav?.ders);
 
   if (seciliHucre) {
-    const { tarih, oturum } = seciliHucre;
+    const { tarih, oturum, derslik } = seciliHucre;
+    const hedefOturumId = Number(oturum.oturumId);
+    const siraliOturumlar = oturumlariSirala(oturumlar);
+    const oturumIndeksMap = oturumIndeksHaritasi(siraliOturumlar);
+    const hedefIdx = oturumIndeksMap.get(hedefOturumId);
+    const komsuOturumIdleri =
+      hedefIdx !== undefined
+        ? [
+            siraliOturumlar[hedefIdx - 1]?.oturumId,
+            siraliOturumlar[hedefIdx + 1]?.oturumId
+          ]
+            .filter((id) => id != null)
+            .map(Number)
+        : [hedefOturumId - 1, hedefOturumId + 1];
 
-    const bugununSinavlari = sinavlar.filter(s => s.tarih && String(s.tarih).split('T')[0] === tarih);
+    const bugununSinavlari = sinavlar.filter((s) => tarihNorm(s.tarih) === tarih);
 
-    oGunePlanliSinavlar = bugununSinavlari.filter(sinav => {
-      const sinavYariyili = sinav.ders?.yariyil;
-      if (!sinavYariyili) return true; 
+    oGunePlanliSinavlar = bugununSinavlari.filter((sinav) => {
+      const sinavId = sinav.sinavId;
+      const ogrenciSayisi = Number(sinav.ders?.ogrenciSayisi ?? 0);
+      const sinavYariyil = sinav.ders?.yariyil;
+      const sinavBolumId = bolumIdOfDers(sinav.ders);
 
-      const oOturumdakiYariyillar = atamalar
-        .filter(a => a.tarih === tarih && a.oturum?.oturumId === oturum.oturumId)
-        .map(a => a.ders?.yariyil)
-        .filter(Boolean); 
-      
-      if (oOturumdakiYariyillar.includes(sinavYariyili)) return false; 
+      // Bu hücrede zaten atanmış
+      const buHucredeZaten = atamalar.some(
+        (a) =>
+          Number(a.sinavId) === Number(sinavId) &&
+          a.tarih === tarih &&
+          Number(a.oturum?.oturumId) === hedefOturumId &&
+          Number(a.derslik?.derslikId) === Number(derslik.derslikId)
+      );
+      if (buHucredeZaten) return false;
+
+      // HATA 2: Sınav o gün yalnızca tek oturumda (farklı saat dilimlerinde tekrar listelenmez)
+      const kilitliOturum = sinavGunlukKilitliOturumId(sinavId, tarih, atamalar);
+      if (kilitliOturum != null && kilitliOturum !== hedefOturumId) return false;
+
+      // HATA 1: Kapasite dolana kadar aynı oturumdaki diğer boş salonlarda görünmeye devam et
+      const toplamAtananKapasite = sinavOturumdakiToplamKapasite(
+        sinavId,
+        tarih,
+        hedefOturumId,
+        atamalar
+      );
+      if (ogrenciSayisi > 0 && toplamAtananKapasite >= ogrenciSayisi) return false;
+
+      if (sinavYariyil != null && sinavBolumId != null) {
+        // Kural 1: Başka bir ders aynı oturum + yarıyıl + bölüm (kendi parçalı ataması sayılmaz)
+        const baskaDersAyniOturum = atamalar.some(
+          (a) =>
+            Number(a.sinavId) !== Number(sinavId) &&
+            a.tarih === tarih &&
+            Number(a.oturum?.oturumId) === hedefOturumId &&
+            Number(a.ders?.yariyil) === Number(sinavYariyil) &&
+            Number(a.ders?.bolumId ?? bolumIdOfDers(a.ders)) === Number(sinavBolumId)
+        );
+        if (baskaDersAyniOturum) return false;
+
+        // Kural 1: Komşu oturumlarda aynı yarıyıl + bölüm (başka dersler)
+        const komsuBaskaDers = atamalar.some(
+          (a) =>
+            Number(a.sinavId) !== Number(sinavId) &&
+            a.tarih === tarih &&
+            komsuOturumIdleri.includes(Number(a.oturum?.oturumId)) &&
+            Number(a.ders?.yariyil) === Number(sinavYariyil) &&
+            Number(a.ders?.bolumId ?? bolumIdOfDers(a.ders)) === Number(sinavBolumId)
+        );
+        if (komsuBaskaDers) return false;
+
+        // Kural 2: Aynı yarıyıl + bölüm günde max 2 oturum, peş peşe yasak
+        const gunlukOturumlar = new Set(
+          atamalar
+            .filter(
+              (a) =>
+                a.tarih === tarih &&
+                Number(a.ders?.yariyil) === Number(sinavYariyil) &&
+                Number(a.ders?.bolumId ?? bolumIdOfDers(a.ders)) === Number(sinavBolumId)
+            )
+            .map((a) => Number(a.oturum?.oturumId))
+        );
+        if (gunlukOturumlar.size >= 2 && !gunlukOturumlar.has(hedefOturumId)) return false;
+        if (komsuOturumIdleri.some((oid) => gunlukOturumlar.has(oid))) return false;
+      }
+
       return true;
     });
 
-    uygunPersoneller = personeller.filter(p => {
-      const hocaninBugunkuSınavları = atamalar.filter(a => a.tarih === tarih && a.personel?.personelId === p.personelId);
-      const ayniSaatteDoluMu = hocaninBugunkuSınavları.some(a => a.oturum?.oturumId === oturum.oturumId);
-      if (ayniSaatteDoluMu) return false;
+    uygunPersoneller = personeller
+      .filter((p) => {
+        // Kural 7: İzinli / Raporlu — kesinlikle gizle
+        if (personelMazeretliMi(p.personelId, tarih, mazeretliSet)) return false;
 
-      const gunlukGorevSayisi = new Set(hocaninBugunkuSınavları.map(a => a.oturum?.oturumId).filter(Boolean)).size;
-      if (gunlukGorevSayisi >= 4) return false;
+        const hocaninBugunku = atamalar.filter(
+          (a) => a.tarih === tarih && Number(a.personel?.personelId) === Number(p.personelId)
+        );
 
-      return true;
-    });
+        // Kural 5: Aynı oturumda başka salonda
+        if (
+          hocaninBugunku.some((a) => Number(a.oturum?.oturumId) === hedefOturumId)
+        ) {
+          return false;
+        }
+
+        // HATA 2 FİKSİ — Kural 6: Günde max 4 oturum (eğer 4 oturum atanmışsa, 5. herhangibir oturuma atanAMAZ)
+        const gunlukOturumlar = new Set(
+          hocaninBugunku
+            .map((a) => Number(a.oturum?.oturumId))
+            .filter((id) => !Number.isNaN(id))
+        );
+        // Hedef oturuma atanacaksa toplam = current + 1, değilse = current. Her iki durumda > 4 ise engelle.
+        if (gunlukOturumlar.size >= 4) return false;
+
+        // HATA 3 FİKSİ — Kural 9: Arka arkaya max 3 oturum (4. ardışık oturuma atanAMAZ)
+        if (
+          ardisikOturumLimitiAsildi(
+            p.personelId,
+            tarih,
+            hedefOturumId,
+            atamalar,
+            oturumIndeksMap
+          )
+        ) {
+          return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => {
+        const aKendi =
+          seciliSinavBolumId != null && Number(a.bolumId) === Number(seciliSinavBolumId) ? 0 : 1;
+        const bKendi =
+          seciliSinavBolumId != null && Number(b.bolumId) === Number(seciliSinavBolumId) ? 0 : 1;
+        if (aKendi !== bKendi) return aKendi - bKendi;
+        return `${a.unvan} ${a.soyad}`.localeCompare(`${b.unvan} ${b.soyad}`, 'tr-TR');
+      });
   }
 
   if (loading) return <div className="p-10 flex justify-center"><Loader2 className="animate-spin w-8 h-8" /></div>;
@@ -147,8 +413,23 @@ const Dashboard = () => {
           <h1 className="text-2xl font-bold text-gray-800 flex items-center"><LayoutDashboard className="mr-2 text-blue-600" /> Sınav Programı</h1>
           <p className="text-gray-500 text-sm mt-1">Sınav planladığınız tarihler tabloda otomatik olarak belirir.</p>
         </div>
-        <div className="flex items-center text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border">
-          <ShieldCheck className="w-5 h-5 mr-2" /> Canlı Denetim Aktif
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleOtomatikDagit}
+            disabled={otomatikYukleniyor}
+            className="flex items-center gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-bold px-5 py-2.5 rounded-xl shadow-md disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+          >
+            {otomatikYukleniyor ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <Bot className="w-5 h-5" />
+            )}
+            🤖 Tümünü Otomatik Ata
+          </button>
+          <div className="flex items-center text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border">
+            <ShieldCheck className="w-5 h-5 mr-2" /> Canlı Denetim Aktif
+          </div>
         </div>
       </div>
 
@@ -235,7 +516,14 @@ const Dashboard = () => {
                 <select value={seciliPersonelId} onChange={e => setSeciliPersonelId(e.target.value)} className="w-full border-2 rounded-xl px-4 py-3">
                   <option value="">-- Gözetmen Seçiniz --</option>
                   {uygunPersoneller.length === 0 && <option disabled>Uygun gözetmen kalmadı!</option>}
-                  {uygunPersoneller.map(p => <option key={p.personelId} value={p.personelId}>{p.unvan} {p.soyad}</option>)}
+                  {uygunPersoneller.map((p) => {
+                    const kendiBolum = seciliSinavBolumId != null && Number(p.bolumId) === Number(seciliSinavBolumId);
+                    return (
+                      <option key={p.personelId} value={p.personelId}>
+                        {kendiBolum ? '★ ' : '○ Ortak Havuz — '}{p.unvan} {p.soyad}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
