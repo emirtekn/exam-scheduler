@@ -13,12 +13,12 @@ import java.time.LocalDate;
 @Repository
 public interface SinavRepository extends JpaRepository<Sinav, Integer> {
 
-    // Senin yazdığın Service'in aradığı fonksiyon tam olarak bu:
-    @Modifying
+    // YENİ VE ZEKİ ROBOTUMUZ (Önbellek temizleme garantili)
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Transactional
-    @Query(value = "EXEC akilliSalonAta :dersKodu, :tarih, :oturumId", nativeQuery = true)
-    void akilliSalonAta(
-        @Param("dersKodu") String dersKodu, 
+    @Query(value = "EXEC sp_AkilliSalonAta :dersId, :tarih, :oturumId", nativeQuery = true)
+    void sp_AkilliSalonAta(
+        @Param("dersId") Integer dersId, 
         @Param("tarih") LocalDate tarih, 
         @Param("oturumId") Integer oturumId
     );

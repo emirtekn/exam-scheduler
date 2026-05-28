@@ -8,9 +8,9 @@ const DersYonetimi = () => {
   const [dersKodu, setDersKodu] = useState('');
   const [dersAdi, setDersAdi] = useState('');
   const [dersTuru, setDersTuru] = useState('Zorunlu');
-  const [ogrenciSayisi, setOgrenciSayisi] = useState('');
+  const [ogrenciSayisi, setOgrenciSayisi] = useState(''); // Artık serbest sayı değil, dropdown!
   const [yariyil, setYariyil] = useState('1');
-  const [bolumId, setBolumId] = useState('1');
+  const [bolumId, setBolumId] = useState('1'); // Veritabanındaki yeni 5 bölüme göre
 
   const [dersler, setDersler] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -39,7 +39,7 @@ const DersYonetimi = () => {
     e.preventDefault();
     
     if (!dersKodu || !dersAdi || !ogrenciSayisi) {
-      toast.error('Lütfen zorunlu alanları doldurun!');
+      toast.error('Lütfen tüm alanları (Özellikle Kapasite) doldurun!');
       return;
     }
 
@@ -64,6 +64,7 @@ const DersYonetimi = () => {
       setOgrenciSayisi('');
       setDersTuru('Zorunlu');
       setYariyil('1');
+      setBolumId('1');
       
       // Tabloyu güncelle
       dersleriGetir();
@@ -81,7 +82,7 @@ const DersYonetimi = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-800">Ders Yönetimi</h1>
-        <p className="text-gray-500">Fakültedeki dersleri, kontenjanları ve dönemleri tanımlayın.</p>
+        <p className="text-gray-500">Fakültedeki dersleri, hocanın kapasite kurallarına göre tanımlayın.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -113,14 +114,21 @@ const DersYonetimi = () => {
             </div>
 
             <div className="grid grid-cols-2 gap-4">
+              {/* KONTENJAN ARTIK SABİT AÇILIR LİSTE (HOCANIN KURALI) */}
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Kontenjan</label>
-                <input 
-                  type="number" placeholder="Kişi Sayısı" min="1"
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Kontenjan (Kural)</label>
+                <select 
                   value={ogrenciSayisi} onChange={(e) => setOgrenciSayisi(e.target.value)}
-                  className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+                  className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                >
+                  <option value="">-- Seçiniz --</option>
+                  <option value="50">50 Kişi (311 Nolu Sınıf)</option>
+                  <option value="60">60 Kişi (Küçük Sınıflar)</option>
+                  <option value="80">80 Kişi (309 Nolu Sınıf)</option>
+                  <option value="150">150 Kişi (Büyük Sınıflar)</option>
+                </select>
               </div>
+              
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Yarıyıl</label>
                 <select 
@@ -142,17 +150,22 @@ const DersYonetimi = () => {
                   className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                 >
                   <option value="Zorunlu">Zorunlu</option>
-                  <option value="Secmeli">Seçmeli</option>
+                  <option value="Seçmeli">Seçmeli</option>
                 </select>
               </div>
+              
+              {/* BÖLÜM ID'LERİ VERİTABANINDAKİ YENİ 5 BÖLÜME GÖRE GÜNCELLENDİ */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Bölüm</label>
                 <select 
                   value={bolumId} onChange={(e) => setBolumId(e.target.value)}
                   className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                 >
-                  <option value="1">Yazılım Müh.</option>
-                  <option value="2">Bilgisayar Müh.</option>
+                  <option value="1">Yazılım Mühendisliği</option>
+                  <option value="2">Elektrik Mühendisliği</option>
+                  <option value="3">Makine Mühendisliği</option>
+                  <option value="4">Mekatronik Mühendisliği</option>
+                  <option value="5">Enerji Sistemleri</option>
                 </select>
               </div>
             </div>
@@ -194,7 +207,7 @@ const DersYonetimi = () => {
                 <tbody className="text-sm">
                   {dersler.length === 0 ? (
                     <tr>
-                      <td colSpan="5" className="p-6 text-center text-gray-500">Henüz ders eklenmemiş.</td>
+                      <td colSpan="5" className="p-6 text-center text-gray-500">Henüz ders eklenmemiş. Lütfen sol taraftan ekleyin.</td>
                     </tr>
                   ) : (
                     dersler.map((ders, index) => (

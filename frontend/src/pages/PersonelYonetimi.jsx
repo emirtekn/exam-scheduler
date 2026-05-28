@@ -3,11 +3,20 @@ import axios from 'axios';
 import { Users, Save, List, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+// VERİTABANI İLE EŞLEŞEN BÖLÜM SÖZLÜĞÜ (Tabloda ismi yazsın diye)
+const bolumSözlüğü = {
+  1: "Yazılım Mühendisliği",
+  2: "Elektrik Mühendisliği",
+  3: "Makine Mühendisliği",
+  4: "Mekatronik Mühendisliği",
+  5: "Enerji Sistemleri Mühendisliği"
+};
+
 const PersonelYonetimi = () => {
   const [ad, setAd] = useState('');
   const [soyad, setSoyad] = useState('');
   const [unvan, setUnvan] = useState('Prof. Dr.');
-  const [bolumId, setBolumId] = useState('1');
+  const [bolumId, setBolumId] = useState('1'); // Varsayılan: Yazılım
 
   const [personeller, setPersoneller] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -51,11 +60,13 @@ const PersonelYonetimi = () => {
 
       toast.success(`${unvan} ${ad} ${soyad} başarıyla eklendi!`, { id: toastId });
       
+      // Formu temizle
       setAd('');
       setSoyad('');
       setUnvan('Prof. Dr.');
       setBolumId('1');
       
+      // Tabloyu güncelle
       personelleriGetir();
 
     } catch (error) {
@@ -93,7 +104,9 @@ const PersonelYonetimi = () => {
                 <option value="Prof. Dr.">Prof. Dr.</option>
                 <option value="Doç. Dr.">Doç. Dr.</option>
                 <option value="Dr. Öğr. Üyesi">Dr. Öğr. Üyesi</option>
+                <option value="Öğr. Gör. Dr.">Öğr. Gör. Dr.</option>
                 <option value="Öğr. Gör.">Öğr. Gör.</option>
+                <option value="Arş. Gör. Dr.">Arş. Gör. Dr.</option>
                 <option value="Arş. Gör.">Arş. Gör.</option>
               </select>
             </div>
@@ -101,7 +114,7 @@ const PersonelYonetimi = () => {
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Ad</label>
               <input 
-                type="text" placeholder="Örn: Ahmet" 
+                type="text" placeholder="Örn: Fatih" 
                 value={ad} onChange={(e) => setAd(e.target.value)}
                 className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none"
               />
@@ -110,7 +123,7 @@ const PersonelYonetimi = () => {
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Soyad</label>
               <input 
-                type="text" placeholder="Örn: Yılmaz" 
+                type="text" placeholder="Örn: YÜCALAR" 
                 value={soyad} onChange={(e) => setSoyad(e.target.value)}
                 className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none uppercase"
               />
@@ -122,8 +135,10 @@ const PersonelYonetimi = () => {
                 value={bolumId} onChange={(e) => setBolumId(e.target.value)}
                 className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
               >
-                <option value="1">Yazılım Mühendisliği</option>
-                <option value="2">Bilgisayar Mühendisliği</option>
+                {/* Sözlüğü döngüye sokup açılır listeyi (dropdown) basıyoruz */}
+                {Object.entries(bolumSözlüğü).map(([id, isim]) => (
+                  <option key={id} value={id}>{isim}</option>
+                ))}
               </select>
             </div>
 
@@ -156,7 +171,7 @@ const PersonelYonetimi = () => {
                   <tr className="bg-gray-50 text-gray-600 text-sm border-b">
                     <th className="p-4 font-semibold">Ünvan</th>
                     <th className="p-4 font-semibold">Ad Soyad</th>
-                    <th className="p-4 font-semibold">Bölüm ID</th>
+                    <th className="p-4 font-semibold text-right">Bağlı Olduğu Bölüm</th>
                   </tr>
                 </thead>
                 <tbody className="text-sm">
@@ -169,7 +184,10 @@ const PersonelYonetimi = () => {
                       <tr key={index} className="border-b hover:bg-gray-50 transition-colors">
                         <td className="p-4 font-bold text-gray-600">{personel.unvan}</td>
                         <td className="p-4 font-bold text-emerald-600 uppercase">{personel.ad} {personel.soyad}</td>
-                        <td className="p-4 text-gray-700">Bölüm {personel.bolumId}</td>
+                        {/* Burada Bölüm ID yerine, sözlükten o ID'nin karşılığı olan metni yazdırıyoruz */}
+                        <td className="p-4 text-gray-700 font-medium text-right bg-gray-50/50">
+                          {bolumSözlüğü[personel.bolumId] || `Bölüm ${personel.bolumId}`}
+                        </td>
                       </tr>
                     ))
                   )}
