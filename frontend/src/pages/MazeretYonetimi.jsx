@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Calendar, UserX, Save, Loader2 } from 'lucide-react'; // 'List' i sildik
+import { Calendar, UserX, Save, Loader2, Trash2 } from 'lucide-react'; // Trash2 ikon eklendi
 import toast from 'react-hot-toast';
 
 const MazeretYonetimi = () => {
@@ -64,6 +64,21 @@ const MazeretYonetimi = () => {
     }
   };
 
+  const handleMazeretSil = async (durumId) => {
+    const onay = window.confirm('Bu mazeret kaydını silmek istediğinize emin misiniz?');
+    if (!onay) return;
+
+    try {
+      await axios.delete(`http://localhost:8080/api/durumlar/sil/${durumId}`);
+      toast.success('Mazeret kaydı silindi!');
+      // State'i güncelle
+      setDurumlar(durumlar.filter(d => d.durumId !== durumId));
+    } catch (error) {
+      console.error("Silme hatası:", error);
+      toast.error('Silme sırasında hata oluştu!');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-800">Personel Mazeret Yönetimi</h1>
@@ -124,11 +139,12 @@ const MazeretYonetimi = () => {
                     <th className="p-3">Hoca ID</th>
                     <th className="p-3">Tarih</th>
                     <th className="p-3">Mazeret</th>
+                    <th className="p-3">İşlem</th>
                   </tr>
                 </thead>
                 <tbody className="text-sm">
                   {durumlar.length === 0 ? (
-                    <tr><td colSpan="3" className="p-4 text-center text-gray-500">Henüz mazeret girilmemiş.</td></tr>
+                    <tr><td colSpan="4" className="p-4 text-center text-gray-500">Henüz mazeret girilmemiş.</td></tr>
                   ) : (
                     durumlar.map((d, index) => {
                       const ilgiliPersonel = personeller.find(p => p.personelId === d.personelId);
@@ -139,6 +155,14 @@ const MazeretYonetimi = () => {
                           </td>
                           <td className="p-3 font-medium">{new Date(d.tarih).toLocaleDateString('tr-TR')}</td>
                           <td className="p-3"><span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold">{d.mazeretTuru}</span></td>
+                          <td className="p-3">
+                            <button
+                              onClick={() => handleMazeretSil(d.durumId)}
+                              className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors"
+                            >
+                              <Trash2 className="w-3 h-3" /> Sil
+                            </button>
+                          </td>
                         </tr>
                       );
                     })
